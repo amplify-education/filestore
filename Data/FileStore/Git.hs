@@ -346,10 +346,14 @@ fetch repo = do
 
 checkoutRemote :: FilePath -> Remote -> IO ()
 checkoutRemote repo remote = do
-    (status, err, _) <- runGitCommand repo "checkout" [qualifiedBranch remote]
-    if status == ExitSuccess
-       then return ()
-       else throwIO $ UnknownError $ "git checkout failed with error " ++ err
+    (statusCh, errCh, _) <- runGitCommand repo "checkout" [remoteBranch remote]
+    if statusCh == ExitSuccess
+       then do
+         (statusReset, errReset, _) <- runGitCommand repo "reset" ["--hard", qualifiedBranch remote]
+         if statusReset == ExitSuccess
+            then return ()
+            else throwIO $ UnknownError $ "git reset --hard failed with error " ++ errReset
+       else throwIO $ UnknownError $ "git checkout failed with error " ++ errCh
 
 pushRemote :: FilePath -> Remote -> IO ()
 pushRemote repo remote = do
