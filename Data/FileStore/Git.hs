@@ -33,7 +33,6 @@ import System.FilePath ((</>))
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, executable, getPermissions, setPermissions)
 import Control.Exception (throwIO)
 import Paths_filestore
-import Network.URL
 
 -- | Return a filestore implemented using the git distributed revision control system
 -- (<http://git-scm.com/>).
@@ -390,26 +389,34 @@ remoteRetrieve :: Contents a => FilePath -> Remote -> FilePath -> Maybe Revision
 remoteRetrieve repo remote name revid =
     withSyncDown repo remote $ \fs -> (retrieve fs) name revid
 
+remoteDelete :: FilePath -> Remote -> FilePath -> Author -> Description -> IO ()
 remoteDelete repo remote name author logMsg =
     withSyncBoth repo remote $ \fs -> (delete fs) name author logMsg
 
+remoteMove :: FilePath -> Remote -> FilePath -> FilePath -> Author -> Description -> IO ()
 remoteMove repo remote oldName newName author logMsg =
     withSyncBoth repo remote $ \fs -> (rename fs) oldName newName author logMsg
 
+remoteLog :: FilePath -> Remote -> [FilePath] -> TimeRange -> IO [Revision]
 remoteLog repo remote names time =
     withSyncDown repo remote $ \fs -> (history fs) names time
 
+remoteLatest :: FilePath -> Remote -> FilePath -> IO RevisionId
 remoteLatest repo remote name =
     withSyncDown repo remote $ \fs -> (latest fs) name
 
+remoteGetRevision :: FilePath -> Remote -> RevisionId -> IO Revision
 remoteGetRevision repo remote revid =
     withSyncDown repo remote $ \fs -> (revision fs) revid
 
+remoteIndex :: FilePath -> Remote -> IO [FilePath]
 remoteIndex repo remote =
     withSyncDown repo remote $ index
 
+remoteDirectory :: FilePath -> Remote -> FilePath -> IO [Resource]
 remoteDirectory repo remote dir =
     withSyncDown repo remote $ \fs -> (directory fs) dir
 
+remoteSearch :: FilePath -> Remote -> SearchQuery -> IO [SearchMatch]
 remoteSearch repo remote query =
     withSyncDown repo remote $ \fs -> (search fs) query
