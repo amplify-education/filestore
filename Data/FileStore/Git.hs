@@ -14,6 +14,8 @@
 
 module Data.FileStore.Git
            ( gitFileStore
+           , remoteGitFileStore
+           , Remote(..)
            )
 where
 import Data.FileStore.Types
@@ -31,6 +33,7 @@ import System.FilePath ((</>))
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, executable, getPermissions, setPermissions)
 import Control.Exception (throwIO)
 import Paths_filestore
+import Network.URL
 
 -- | Return a filestore implemented using the git distributed revision control system
 -- (<http://git-scm.com/>).
@@ -166,7 +169,7 @@ gitGetRevision repo revid = do
      else throwIO NotFound
 
 -- | Get a list of all known files inside and managed by a repository.
-gitIndex :: FilePath ->IO [FilePath]
+gitIndex :: FilePath -> IO [FilePath]
 gitIndex repo = withVerifyDir repo $ do
   (status, _err, output) <- runGitCommand repo "ls-tree" ["-r","-t","-z","HEAD"]
   if status == ExitSuccess
@@ -299,3 +302,114 @@ gitLogChange = do
          "D"  -> return $ Deleted file'
          _    -> return $ Modified file'
 
+
+data Remote = Remote {
+    remoteName :: String
+  , remoteBranch :: String
+  , remoteUrl :: String
+}
+
+qualifiedBranch :: Remote -> String
+qualifiedBranch remote = (remoteName remote) ++ "/" ++ (remoteBranch remote)
+
+remoteGitFileStore :: FilePath -> Remote -> FileStore
+remoteGitFileStore repo remote = FileStore {
+    initialize        = remoteInit repo remote 
+  , save              = remoteSave repo remote
+  , retrieve          = remoteRetrieve repo remote
+  , delete            = remoteDelete repo remote
+  , rename            = remoteMove repo remote
+  , history           = remoteLog repo remote
+  , latest            = remoteLatest repo remote
+  , revision          = remoteGetRevision repo remote
+  , index             = remoteIndex repo remote
+  , directory         = remoteDirectory repo remote
+  , search            = remoteSearch repo remote
+  , idsMatch          = const hashsMatch repo
+  }
+  where
+
+remoteInit :: FilePath -> Remote -> IO ()
+remoteInit repo remote = do
+    let fs = gitFileStore repo
+    initialize fs
+    (status, err, _) <- runGitCommand repo "remote" ["add", remoteName remote, remoteUrl remote]
+    if status == ExitSuccess
+       then return ()
+       else throwIO $ UnknownError $ "git add remote failed:\n" ++ err
+
+fetch :: FilePath -> IO ()
+fetch repo = do
+    (status, err, _) <- runGitCommand repo "fetch" []
+    if status == ExitSuccess
+       then return ()
+       else throwIO $ UnknownError $ "git fetch failed with error " ++ err
+
+checkoutRemote :: FilePath -> Remote -> IO ()
+checkoutRemote repo remote = do
+    (status, err, _) <- runGitCommand repo "checkout" [qualifiedBranch remote]
+    if status == ExitSuccess
+       then return ()
+       else throwIO $ UnknownError $ "git checkout failed with error " ++ err
+
+pushRemote :: FilePath -> Remote -> IO ()
+pushRemote repo remote = do
+    (status, err, _) <- runGitCommand repo "push" [remoteName remote, remoteBranch remote]
+    if status == ExitSuccess
+       then return ()
+       else throwIO $ UnknownError $ "git push failed with error " ++ err
+
+withSyncDown :: FilePath -> Remote -> (FileStore -> IO a) -> IO a
+withSyncDown repo remote f = do
+    let fs = gitFileStore repo
+    fetch repo
+    checkoutRemote repo remote
+    f fs
+
+withSyncBoth :: FilePath -> Remote -> (FileStore -> IO a) -> IO a
+withSyncBoth repo remote f = do
+    let fs = gitFileStore repo
+    fetch repo
+    checkoutRemote repo remote
+    result <- f fs
+    pushRemote repo remote
+    return result
+
+remoteSave :: Contents a
+           => FilePath
+           -> Remote
+           -> FilePath
+           -> Author
+           -> Description
+           -> a
+           -> IO ()
+remoteSave repo remote name author logMsg contents =
+    withSyncBoth repo remote $ \fs -> (save fs) name author logMsg contents
+
+remoteRetrieve :: Contents a => FilePath -> Remote -> FilePath -> Maybe RevisionId -> IO a
+remoteRetrieve repo remote name revid =
+    withSyncDown repo remote $ \fs -> (retrieve fs) name revid
+
+remoteDelete repo remote name author logMsg =
+    withSyncBoth repo remote $ \fs -> (delete fs) name author logMsg
+
+remoteMove repo remote oldName newName author logMsg =
+    withSyncBoth repo remote $ \fs -> (rename fs) oldName newName author logMsg
+
+remoteLog repo remote names time =
+    withSyncDown repo remote $ \fs -> (history fs) names time
+
+remoteLatest repo remote name =
+    withSyncDown repo remote $ \fs -> (latest fs) name
+
+remoteGetRevision repo remote revid =
+    withSyncDown repo remote $ \fs -> (revision fs) revid
+
+remoteIndex repo remote =
+    withSyncDown repo remote $ index
+
+remoteDirectory repo remote dir =
+    withSyncDown repo remote $ \fs -> (directory fs) dir
+
+remoteSearch repo remote query =
+    withSyncDown repo remote $ \fs -> (search fs) query
